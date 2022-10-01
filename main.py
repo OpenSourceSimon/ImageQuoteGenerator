@@ -1,23 +1,19 @@
+import json
 import os
 import textwrap
+from datetime import datetime
 
 import requests
-import tweepy
 from PIL import Image, ImageDraw, ImageFont
 from dotenv import load_dotenv
 
 
 def import_env():
     load_dotenv()
-    global CONSUMER_KEY, CONSUMER_SECRET, ACCESS_KEY, ACCESS_SECRET
-    CONSUMER_KEY = os.getenv('CONSUMER_KEY')
-    CONSUMER_SECRET = os.getenv('CONSUMER_SECRET')
-    ACCESS_KEY = os.getenv('ACCESS_KEY')
-    ACCESS_SECRET = os.getenv('ACCESS_SECRET')
     IMAGES_TO_GENERATE = os.getenv('IMAGES_TO_GENERATE')
     if IMAGES_TO_GENERATE is None or IMAGES_TO_GENERATE == '':
         IMAGES_TO_GENERATE = 1
-    return CONSUMER_KEY, CONSUMER_SECRET, ACCESS_KEY, ACCESS_SECRET, IMAGES_TO_GENERATE
+    return IMAGES_TO_GENERATE
 
 
 def draw_multiple_line_text(image, text, font, text_color, text_start_height):
@@ -39,19 +35,34 @@ def draw_multiple_line_text(image, text, font, text_color, text_start_height):
 
 def get_quote():
     try:
-        main = requests.get('https://api.quotable.io/random')
-        data = main.json()
+        data = requests.get('https://api.quotable.io/random').json()
         quote = data['content']
         author = data['author']
+        SAVE_QUOTES_TO_FILE = os.getenv('SAVE_QUOTES_TO_FILE')
+        quotes = open('quotes.json', 'r')
+        if quote in quotes and SAVE_QUOTES_TO_FILE == 'True':
+            print("\033[91m" + "Error: Quote already exists! \033[0m")
+            get_quote()
+        elif SAVE_QUOTES_TO_FILE == 'True':
+            with open('quotes.json', 'r') as f:
+                data = json.load(f)
+                data.append({
+                    'quote': quote,
+                    'author': author
+                })
+            with open('quotes.json', 'w') as f:
+                json.dump(data, f)
+        else:
+            pass
         print("\033[92m" + "Quote found! \033[0m")
         print("\033[92m" + quote + " - " + author + "\033[0m")
         return quote, author
     except KeyError:
         print("\033[91m" + "Error: Quote not found! \033[0m")
-        return None
+        get_quote()
 
 
-def create_image(quote, author, i):
+def create_image(quote, author, i, folder):
     try:
         resolution = os.getenv('RESOLUTION')
         category = os.getenv('CATEGORY')
@@ -67,8 +78,8 @@ def create_image(quote, author, i):
             return None
         image = image.resize((4000, 4000))
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype('fonts/Roboto-Italic.ttf', 150)
-        font2 = ImageFont.truetype('fonts/Roboto-Bold.ttf', 150)
+        font = ImageFont.truetype('fonts/Roboto-Italic.ttf', int(font_size))
+        font2 = ImageFont.truetype('fonts/Roboto-Bold.ttf', int(font_size))
         if len(quote) > 350:
             text_start_height = (image.height - font.getbbox(quote)[3]) / 2 - 500
         elif len(quote) > 250:
@@ -84,52 +95,35 @@ def create_image(quote, author, i):
                   author, font=font2, fill=(0, 0, 0))
         # Draw the author
         draw.text(((image.width - font2.getbbox(author)[2]) / 2, end + 50), author, font=font2, fill=(255, 255, 255))
-        if not os.path.exists('images'):
-            os.makedirs('images')
-        image.save(f'images/quote_{i}.jpg')
+        # If file already exists, add a number to the end of the file. Check again if the file exists and add a number to the end of the file.
+        for i in range(100):
+            if os.path.exists(f'{folder}/{i}.jpg'):
+                continue
+            else:
+                image.save(f'{folder}/{i}.jpg')
+                break
+        print(i)
         print("\033[92m" + "Image created! \033[0m")
     except KeyError:
         print("\033[91m" + "Error: Image not created! \033[0m")
         return None
 
 
-# Tweet the image
-def tweet_image(i):
-    if CONSUMER_KEY == '' or CONSUMER_SECRET == '' or ACCESS_KEY == '' or ACCESS_SECRET == '' or CONSUMER_KEY is None or CONSUMER_SECRET is None or ACCESS_KEY is None or ACCESS_SECRET is None:
-        print("\033[91m" + "Please fill in the credentials first in the .env file! \033[0m")
-        exit()
-    auth = tweepy.OAuthHandler(CONSUMER_KEY, CONSUMER_SECRET)
-    auth.set_access_token(ACCESS_KEY, ACCESS_SECRET)
-    api = tweepy.API(auth)
-    try:
-        imagePath = f"images/quote{i}.jpg"
-        status = "#motivation #inspiration #quote"
-
-        api.update_with_media(imagePath, status)
-        print("\033[94m" + "Tweeted! \033[0m")
-    except tweepy.TweepError as e:
-        if e.api_code == 187:
-            print("\033[91m" + "Error: Duplicate tweet! \033[0m")
-            return None
-        elif e.api_code == 186:
-            print("\033[91m" + "Error: Tweet is too long! \033[0m")
-            return None
-        elif e.api_code == 326:
-            print("\033[91m" + "Error: Image is too large! \033[0m")
-            return None
-        else:
-            if 'Failed to send request: Only unicode objects are escapable.' in e.reason:
-                print("\033[91m" + "Error: Credentials are not correct! \033[0m")
-                exit()
-                return None
-            print("\033[91m" + "Error: Something went wrong! \033[0m")
-            print(e)
-            return None
+def create_folder():
+    # Get the date
+    now = datetime.now()
+    date = now.strftime("%d-%m-%Y")
+    hour = now.strftime("%H")
+    if not os.path.exists(f'images/{date}/{hour}h - {os.getenv("CATEGORY")}'):
+        os.makedirs(f'images/{date}/{hour}h - {os.getenv("CATEGORY")}')
+    return f'images/{date}/{hour}h - {os.getenv("CATEGORY")}'
 
 
 if __name__ == '__main__':
-    CONSUMER_KEY, CONSUMER_SECRET, ACCESS_KEY, ACCESS_SECRET, IMAGES_TO_GENERATE = import_env()
+    print("\033[92m" + "Starting... \033[0m")
+    IMAGES_TO_GENERATE = import_env()
+    print("\033[92m" + "Environment variables imported! \033[0m")
+    folder = create_folder()
     for i in range(int(IMAGES_TO_GENERATE)):
         quote, author = get_quote()
-        create_image(quote, author, i)
-        # tweet_image(i)
+        create_image(quote, author, i, folder)
